@@ -97,3 +97,25 @@ INSERT INTO json_config (config_key, config_value) VALUES
     ('remote_directory', '"/upload/fal"'),
     ('options',          '{"language": "fa", "encoding": "utf-8"}')
 ON CONFLICT (config_key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS failed_records (
+    id              BIGSERIAL PRIMARY KEY,
+    account_id      VARCHAR(64)  NOT NULL,
+    operation_type  VARCHAR(32)  NOT NULL,
+    segment_info    VARCHAR(128) NOT NULL,
+    error_code      VARCHAR(16)  NOT NULL,
+    error_message   TEXT         NOT NULL,
+    source_file     VARCHAR(256) NOT NULL,
+    line_number     INTEGER      NOT NULL,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_failed_record UNIQUE (source_file, line_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_failed_records_account_id
+    ON failed_records (account_id);
+
+CREATE INDEX IF NOT EXISTS idx_failed_records_error_code
+    ON failed_records (error_code);
+
+CREATE INDEX IF NOT EXISTS idx_failed_records_created_at
+    ON failed_records (created_at DESC);

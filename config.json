@@ -30,19 +30,24 @@
   },
 
   "soap": {
-    "endpoint_url": "${SOAP_URL:-http://host.docker.internal:8080/FalService}",
-    "soap_version": "1.1",
-    "soap_action": "http://example.com/fal/ProcessFile",
-    "timeout_seconds": 60,
-    "verify_ssl": true,
-    "headers": {},
-    "auth": {
-      "type": "none",
-      "username": "",
-      "password": "",
-      "token": ""
+    "wsdl_url": "http://cbs-host/BIService?wsdl",
+    "endpoint_url": "http://cbs-host/BIService",
+    "namespace": "http://www.huawei.com/bme/cbsinterface/cbsbatchprovision",
+    "namespace_prefix": "cbs",
+    "service_name": "BatchProvisionService",
+    "port_name": "BatchProvisionPort",
+    "request_message": "BatchScatteredChgSubBasicInfoRequestMsg",
+    "request_element": "BatchScatteredChgSubBasicInfoRequest",
+    "request_header": {
+      "Version": "1.0",
+      "BusinessCode": "CHGSCATTEREDACCT",
+      "MessageSeq": "{{message_seq}}",
+      "BEID": "BEID_001",
+      "LoginSystemCode": "FAL_PROCESSOR",
+      "Password": "changeme",
+      "OperatorID": "SYS_OP"
     },
-    "envelope_template": "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:fal=\"http://example.com/fal\"><soap:Body><fal:ProcessFile><fal:fileName>{{file_name}}</fal:fileName></fal:ProcessFile></soap:Body></soap:Envelope>",
+    "envelope_template": "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:cbs=\"http://www.huawei.com/bme/cbsinterface/cbsbatchprovision\"><soap:Header><cbs:RequestHeader><cbs:Version>{{Version}}</cbs:Version><cbs:BusinessCode>{{BusinessCode}}</cbs:BusinessCode><cbs:MessageSeq>{{MessageSeq}}</cbs:MessageSeq><cbs:BEID>{{BEID}}</cbs:BEID><cbs:LoginSystemCode>{{LoginSystemCode}}</cbs:LoginSystemCode><cbs:Password>{{Password}}</cbs:Password><cbs:OperatorID>{{OperatorID}}</cbs:OperatorID></cbs:RequestHeader></soap:Header><soap:Body><cbs:BatchScatteredChgSubBasicInfoRequestMsg><cbs:BatchScatteredChgSubBasicInfoRequest><cbs:FileName>{{file_name}}</cbs:FileName></cbs:BatchScatteredChgSubBasicInfoRequest></cbs:BatchScatteredChgSubBasicInfoRequestMsg></soap:Body></soap:Envelope>",
     "extra_params_from_db": false,
 
     "initial_delay_seconds": 60,
@@ -58,7 +63,11 @@
       "no such file",
       "file doesn't exist"
     ],
-    "success_patterns": [],
+    "success_patterns": [
+      "<cbs:ResultCode>0</cbs:ResultCode>",
+      "ResultCode>0<",
+      "Operation successfully"
+    ],
 
     "record_errors_in_db": true,
     "response_excerpt_chars": 2000
@@ -69,17 +78,17 @@
     "poll_interval_seconds": 5,
     "stable_seconds": 2,
     "files": [
-      { "name": "summary", "glob": "{stem}_summary*", "required": true, "check_status": true },
-      { "name": "detail",  "glob": "{stem}_detail*",  "required": true, "check_status": false },
-      { "name": "errors",  "glob": "{stem}_errors*",  "required": true, "check_status": false }
+      { "name": "summary", "glob": "{stem}*_summary*", "required": false, "check_status": true },
+      { "name": "detail",  "glob": "{stem}*_detail*",  "required": false, "check_status": false },
+      { "name": "failed",  "glob": "{stem}*_FAILED.msg", "required": false, "check_status": false, "delimiter": "|", "columns": ["account_id", "operation_type", "segment_info", "error_code", "error_message"] }
     ],
     "encoding": "utf-8",
     "encoding_errors": "replace",
     "skip_blank_lines": true,
     "delimiter": "",
     "parse_json_lines": false,
-    "success_regex": "(?i)success",
-    "failure_regex": "(?i)\\b(fail|failed|failure)\\b",
+    "success_regex": "(?i)(success|completed|ResultCode>0<)",
+    "failure_regex": "(?i)\\b(fail|failed|failure|error)\\b",
     "log_preview_lines": 5,
     "log_preview_max_chars": 300,
     "after_import": "keep"
@@ -119,7 +128,6 @@
     "host": "${REDIS_HOST:-redis}",
     "port": "${REDIS_PORT:-6379}",
     "db": 0,
-    "password": "${REDIS_PASSWORD:-}",
     "socket_timeout_seconds": 5,
     "reconnect_delay_seconds": 3,
     "retain_last_values": true,
