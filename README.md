@@ -1,6 +1,6 @@
 # Fal Processor
 
-A modular Python service that feeds hundreds of text files, one at a time, through an
+A modular Python service that feeds hundreds of text files, one at a time,  through an
 external SOAP-based processing pipeline and imports the results into PostgreSQL.
 Everything variable lives in `config.json`; the whole run is controlled and observed
 through Redis channels.
