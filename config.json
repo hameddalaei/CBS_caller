@@ -1,0 +1,142 @@
+{
+  "app": {
+    "name": "fal-processor",
+    "auto_start": false,
+    "idle_poll_seconds": 1
+  },
+
+  "paths": {
+    "source_dir": "${SOURCE_DIR:-/data/source}",
+    "staging_dir": "${STAGING_DIR:-/data/staging}",
+    "results_dir": "${RESULTS_DIR:-/data/results}",
+    "archive_dir": "${ARCHIVE_DIR:-/data/archive}"
+  },
+
+  "source": {
+    "file_glob": "*.txt",
+    "min_age_seconds": 0
+  },
+
+  "rename": {
+    "pattern": "^(?P<name>.+)\\.txt$",
+    "replacement": "FAL_{job_id}_\\g<name>.txt",
+    "on_no_match": "keep_name",
+    "on_target_exists": "error"
+  },
+
+  "staging": {
+    "use_temp_suffix": true,
+    "temp_suffix": ".part"
+  },
+
+  "soap": {
+    "endpoint_url": "${SOAP_URL:-http://host.docker.internal:8080/FalService}",
+    "soap_version": "1.1",
+    "soap_action": "http://example.com/fal/ProcessFile",
+    "timeout_seconds": 60,
+    "verify_ssl": true,
+    "headers": {},
+    "auth": {
+      "type": "none",
+      "username": "",
+      "password": "",
+      "token": ""
+    },
+    "envelope_template": "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:fal=\"http://example.com/fal\"><soap:Body><fal:ProcessFile><fal:fileName>{{file_name}}</fal:fileName></fal:ProcessFile></soap:Body></soap:Envelope>",
+    "extra_params_from_db": false,
+
+    "initial_delay_seconds": 60,
+    "retry_interval_seconds": 15,
+    "max_wait_seconds": 900,
+    "max_attempts": 0,
+    "retry_on_transport_error": true,
+    "retry_on_fault": false,
+
+    "not_found_patterns": [
+      "file does not exist",
+      "file not found",
+      "no such file",
+      "file doesn't exist"
+    ],
+    "success_patterns": [],
+
+    "record_errors_in_db": true,
+    "response_excerpt_chars": 2000
+  },
+
+  "results": {
+    "wait_timeout_seconds": 3600,
+    "poll_interval_seconds": 5,
+    "stable_seconds": 2,
+    "files": [
+      { "name": "summary", "glob": "{stem}_summary*", "required": true, "check_status": true },
+      { "name": "detail",  "glob": "{stem}_detail*",  "required": true, "check_status": false },
+      { "name": "errors",  "glob": "{stem}_errors*",  "required": true, "check_status": false }
+    ],
+    "encoding": "utf-8",
+    "encoding_errors": "replace",
+    "skip_blank_lines": true,
+    "delimiter": "",
+    "parse_json_lines": false,
+    "success_regex": "(?i)success",
+    "failure_regex": "(?i)\\b(fail|failed|failure)\\b",
+    "log_preview_lines": 5,
+    "log_preview_max_chars": 300,
+    "after_import": "keep"
+  },
+
+  "processing": {
+    "on_job_failure": "continue",
+    "retry_failed_on_resume": true
+  },
+
+  "database": {
+    "host": "${DB_HOST:-postgres}",
+    "port": "${DB_PORT:-5432}",
+    "dbname": "${DB_NAME:-fal_db}",
+    "user": "${DB_USER:-fal_user}",
+    "password": "${DB_PASSWORD:-fal_password}",
+    "sslmode": "prefer",
+    "connect_timeout": 10,
+    "max_retries": 5,
+    "retry_delay_seconds": 3,
+    "schema": "public",
+    "auto_create_tables": true,
+    "tables": {
+      "runs": "process_runs",
+      "jobs": "file_jobs",
+      "soap_errors": "soap_call_errors",
+      "results": "result_records",
+      "json_config": "json_config"
+    },
+    "json_config": {
+      "key_column": "config_key",
+      "value_column": "config_value"
+    }
+  },
+
+  "redis": {
+    "host": "${REDIS_HOST:-redis}",
+    "port": "${REDIS_PORT:-6379}",
+    "db": 0,
+    "password": "${REDIS_PASSWORD:-}",
+    "socket_timeout_seconds": 5,
+    "reconnect_delay_seconds": 3,
+    "retain_last_values": true,
+    "channels": {
+      "control": "fal:control",
+      "logs": "fal:logs",
+      "status": "fal:status",
+      "progress": "fal:progress"
+    }
+  },
+
+  "logging": {
+    "level": "INFO",
+    "console": true,
+    "file": "logs/fal_processor.log",
+    "max_bytes": 10485760,
+    "backup_count": 5,
+    "publish_to_redis": true
+  }
+}

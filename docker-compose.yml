@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fal_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fal_db}
+      POSTGRES_USER: ${POSTGRES_USER:-fal_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fal_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: fal_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    container_name: fal_processor
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-fal_db}
+      DB_USER: ${POSTGRES_USER:-fal_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-fal_password}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SOAP_URL: ${SOAP_URL:-http://host.docker.internal:8080/FalService}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # config.json is mounted, so you can edit it and just `docker compose restart app`
+      - ./config.json:/app/config.json:ro
+      - ./data:/data
+      - ./logs:/app/logs
+
+volumes:
+  pgdata:
+  redisdata:
