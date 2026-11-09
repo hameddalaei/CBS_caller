@@ -67,7 +67,7 @@ class RedisLogHandler(logging.Handler):
                 "message": record.getMessage(),
             }
             if record.exc_info:
-                payload["exception"] = self.formatException(record.exc_info)
+                payload["exception"] = (self.formatter or logging.Formatter()).formatException(record.exc_info)
             self._bus.publish_log(payload)
         except Exception:  # noqa: BLE001
             pass
@@ -82,6 +82,7 @@ def setup_logging(cfg, bus):
     logger.propagate = False
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
+        handler.close()
 
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(ctx)s%(message)s")
     ctx_filter = ContextFilter()

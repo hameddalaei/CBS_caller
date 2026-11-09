@@ -27,6 +27,8 @@ def parse_args():
         default=os.environ.get("CONFIG_PATH", "config.json"),
         help="Path to config.json (default: $CONFIG_PATH or ./config.json)",
     )
+    parser.add_argument("--validate-config", action="store_true",
+                        help="Validate configuration without connecting to services or moving files")
     return parser.parse_args()
 
 
@@ -38,6 +40,10 @@ def main():
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+
+    if args.validate_config:
+        print("Configuration is valid (service connectivity and business result format not checked).")
+        return 0
 
     bus = RedisBus(cfg)
     setup_logging(cfg, bus)

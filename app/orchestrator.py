@@ -255,7 +255,12 @@ class Orchestrator:
 
     # -- step 1: move + rename --------------------------------------------
     def _stage_move(self, job):
-        target = self.files.target_name(job["original_name"], job["job_id"])
+        target = job.get("renamed_name")
+        if not target:
+            target = self.files.target_name(job["original_name"], job["job_id"])
+            # Save date-dependent names before touching the filesystem so a
+            # restart can find the same target even on a different day.
+            self.db.update_job(job["job_id"], renamed_name=target)
         outcome = self.files.move_to_staging(job["original_name"], target)
         self.db.update_job(job["job_id"], renamed_name=target, status="moved", moved_at=_now())
         if outcome == "already_moved":
@@ -271,6 +276,9 @@ class Orchestrator:
 
     def _call_soap(self, job):
         job_id, run_id, name = job["job_id"], job["run_id"], job["renamed_name"]
+
+        if self.max_attempts and job["soap_attempts"] >= self.max_attempts:
+            raise JobFailed(f"Web service attempt limit already reached ({self.max_attempts})")
 
         if job["soap_attempts"] == 0 and self.initial_delay > 0:
             self._status(ST_WAITING_FOR_FILE, f"Waiting {self.initial_delay:g}s for the external SFTP transfer")
@@ -355,9 +363,9 @@ class Orchestrator:
         imported = self.db.replace_results(job_id, rows)
         log.info("Imported %d result line(s) from %d file(s) into the database", imported, len(all_paths))
         ok, reason = self.results.evaluate(texts)
-        self.files.finish_result_files(all_paths)
-
         if not ok:
             raise JobFailed(f"Processing result is not successful: {reason}")
         self.db.update_job(job_id, status="done", finished_at=_now(), last_error=None)
+        # Cleanup is best-effort only after the durable completion checkpoint.
+        self.files.finish_result_files(all_paths)
         log.info("File completed successfully")

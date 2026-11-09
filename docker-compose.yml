@@ -51,6 +51,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SOAP_URL: ${SOAP_URL:-http://host.docker.internal:8080/FalService}
+      SOAP_ACTION: ${SOAP_ACTION:-}
+      SOAP_BEID: ${SOAP_BEID:-101}
+      SOAP_LOGIN_SYSTEM_CODE: ${SOAP_LOGIN_SYSTEM_CODE:-102}
+      SOAP_PASSWORD: ${SOAP_PASSWORD:-}
+      SOAP_OPERATOR_ID: ${SOAP_OPERATOR_ID:-101}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

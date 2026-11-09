@@ -1,0 +1,161 @@
+﻿<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><title>راهنمای فارسی Fal Processor</title>
+<style>
+@page{size:A4;margin:14mm 16mm}*{box-sizing:border-box}body{zoom:0.88;margin:0;color:#203047;font-family:Tahoma,Arial,sans-serif;font-size:9pt;line-height:1.65}section{break-after:page}section:last-child{break-after:auto}h1{font-size:29pt;color:#123b58;margin:12mm 0 4mm}h2{font-size:19pt;color:#123b58;margin:0 0 5mm;border-bottom:2px solid #18a6a0;padding-bottom:3mm}h3{font-size:12pt;color:#126b76;margin:5mm 0 2mm}p{margin:2mm 0 3mm}ul,ol{padding-right:6mm;margin:2mm 0}li{margin:1mm 0}code{direction:ltr;unicode-bidi:isolate;display:inline-block;font-family:Consolas,monospace;font-size:9pt}pre{direction:ltr;text-align:left;unicode-bidi:embed;white-space:pre-wrap;overflow-wrap:anywhere;font:9pt/1.6 Consolas,monospace;background:#f0f4f8;border:1px solid #dbe3ec;border-radius:5px;padding:3mm;margin:3mm 0;break-inside:avoid}table{width:100%;border-collapse:collapse;margin:3mm 0;font-size:9pt}th{background:#e8f2f5;color:#123b58}td,th{text-align:right;border:1px solid #d4dfe7;padding:1.2mm 2mm;vertical-align:top}tr{break-inside:avoid}.note{background:#eef8f6;border-right:3px solid #18a6a0;padding:3mm;margin:4mm 0}.meta{color:#62758a;font-size:9pt}.tag{color:#168b89;font-size:12pt;letter-spacing:1px}.foot{margin-top:5mm;border-top:1px solid #d4dfe7;padding-top:2mm;font-size:8pt;color:#62758a}.large{font-size:12pt;line-height:2.2}
+</style></head><body>
+<section>
+<div class="tag">مستندات پروژه • راهنمای راه‌اندازی و بهره‌برداری</div>
+<h1><span dir="ltr">Fal Processor</span></h1><p class="large">پردازش ترتیبی فایل‌ها با وب‌سرویس SOAP، ثبت نتایج در PostgreSQL و کنترل عملیات از طریق Redis</p>
+<p class="meta">تاریخ بررسی: ۲۰ اکتبر ۲۰۲۶ • مبتنی بر کد و تنظیمات موجود در پوشه پروژه</p>
+<h3>این برنامه چه کاری انجام می‌دهد؟</h3>
+<p>برنامه فایل‌های متنی پوشه ورودی را انتخاب می‌کند، هر فایل را با نام جدید به پوشه آماده‌سازی انتقال می‌دهد و پس از فراخوانی وب‌سرویس، منتظر فایل‌های نتیجه می‌ماند. خطوط خروجی در پایگاه داده ثبت می‌شوند و سپس فایل بعدی پردازش می‌شود.</p>
+<div class="note">انتقال SFTP و اجرای پردازش روی سرور خارجی، وظیفه این برنامه نیست. ابزار یا سرویس دیگری باید فایل آماده‌شده را منتقل کند و خروجی‌ها را در پوشه نتایج قرار دهد.</div>
+<h3>چرخه پردازش</h3>
+<ol><li>خواندن فهرست فایل‌های ورودی در ابتدای یک اجرای جدید.</li><li>انتقال و تغییر نام فایل؛ نمونه: <code>fal_a.txt → FAL_000001_fal_a.txt</code>.</li><li>انتظار اولیه برای انتقال خارجی و ارسال نام فایل به SOAP.</li><li>در صورت پیدا نشدن فایل، ثبت خطا و تکرار درخواست طبق تنظیمات.</li><li>انتظار برای خروجی‌های لازم، ثبت خطوط، بررسی نتیجه و اعلام پیشرفت.</li></ol>
+<h3>فهرست راهنما</h3>
+<table><tr><th>بخش</th><th>صفحه</th></tr><tr><td>معرفی و چرخه پردازش</td><td>۱</td></tr><tr><td>راه‌اندازی با Docker</td><td>۲</td></tr><tr><td>اجرای محلی و وب‌سرویس آزمایشی</td><td>۳</td></tr><tr><td>تنظیمات مسیرها و SOAP</td><td>۴</td></tr><tr><td>تنظیمات نتایج و ساختار پروژه</td><td>۵</td></tr><tr><td>کنترل و پایش با Redis</td><td>۶</td></tr><tr><td>پایگاه داده، بازیابی و عیب‌یابی</td><td>۷</td></tr></table>
+<p class="foot">دامنه بررسی: مطالعه کد، تنظیمات و فایل‌های استقرار. اتصال واقعی به سرویس‌ها و آزمون سرتاسری در این بررسی انجام نشده است.</p>
+</section>
+<section><h2>۲. راه‌اندازی با Docker</h2>
+<p>فایل‌های استقرار پروژه از Python 3.12، PostgreSQL 16 و Redis 7 استفاده می‌کنند. برای این روش باید Docker و دستور <code>docker compose</code> در محیط شما قابل اجرا باشند. دستورهای زیر برای PowerShell نوشته شده‌اند.</p>
+<h3>آماده‌سازی پوشه‌ها</h3>
+<pre>Set-Location 'C:\Users\Ha-dalaei\Desktop\fal_processor'
+New-Item -ItemType Directory -Force -Path `
+  data/source,data/staging,data/results,data/archive</pre>
+<p>فایل‌های ورودی را در <code>data/source</code> کپی کنید. برنامه هنگام پردازش، این فایل‌ها را از پوشه ورودی منتقل می‌کند.</p>
+<h3>تنظیم اتصال و درخواست</h3>
+<p>در <code>config.json</code> نشانی وب‌سرویس، <code>soap_action</code>، قالب XML و الگوهای نام خروجی را متناسب با سرویس واقعی تغییر دهید. مقادیر <code>example.com</code> در قالب SOAP نمونه هستند.</p>
+<p>برای جایگزینی مقادیر Compose، فایل <code>.env</code> را کنار <code>docker-compose.yml</code> بسازید. نمونه زیر به وب‌سرویس آزمایشی روی میزبان اشاره می‌کند؛ مقدار رمز را خودتان تعیین کنید.</p>
+<pre>POSTGRES_DB=fal_db
+POSTGRES_USER=fal_user
+POSTGRES_PASSWORD=CHANGE_ME
+SOAP_URL=http://host.docker.internal:8080/FalService</pre>
+<h3>بالا آوردن و شروع پردازش</h3>
+<pre>docker compose up -d --build
+docker compose ps
+docker compose logs -f app</pre>
+<p>پس از آماده شدن برنامه، در ترمینال دیگری دستور شروع را ارسال کنید. مقدار پیش‌فرض <code>app.auto_start</code> برابر <code>false</code> است.</p>
+<pre>docker compose exec redis redis-cli publish fal:control start</pre>
+<table><tr><th>مسیر میزبان</th><th>مسیر داخل کانتینر</th></tr><tr><td><code>./data</code></td><td><code>/data</code></td></tr><tr><td><code>./config.json</code></td><td><code>/app/config.json</code>، فقط خواندنی</td></tr><tr><td><code>./logs</code></td><td><code>/app/logs</code></td></tr></table>
+<p>پس از ویرایش خود فایل تنظیمات، <code>docker compose restart app</code> را اجرا کنید. پس از تغییر متغیرهای محیطی Compose، با <code>docker compose up -d</code> تنظیمات جدید را اعمال کنید.</p>
+<p class="foot">اسکریپت <code>sql/init.sql</code> هنگام مقداردهی اولیه پایگاه داده خالی اجرا می‌شود. تغییر رمز در فایل محیطی، رمز پایگاه داده‌ای را که قبلاً ساخته شده است خودکار تغییر نمی‌دهد.</p>
+</section>
+<section><h2>۳. اجرای محلی و آزمایش</h2>
+<h3>اجرای برنامه با Python روی ویندوز</h3>
+<p>از پوشه پروژه شروع کنید. دستور اول فقط PostgreSQL و Redis را با Compose اجرا می‌کند. نمونه زیر فرض می‌کند اطلاعات اتصال همان مقادیر پیش‌فرض پروژه هستند؛ اگر آن‌ها را تغییر داده‌اید، این مقادیر را نیز هماهنگ کنید.</p>
+<pre>docker compose up -d postgres redis
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+$env:DB_HOST = 'localhost'
+$env:DB_NAME = 'fal_db'
+$env:DB_USER = 'fal_user'
+$env:DB_PASSWORD = 'fal_password'
+$env:REDIS_HOST = 'localhost'
+$env:SOURCE_DIR = "$PWD/data/source"
+$env:STAGING_DIR = "$PWD/data/staging"
+$env:RESULTS_DIR = "$PWD/data/results"
+$env:ARCHIVE_DIR = "$PWD/data/archive"
+$env:SOAP_URL = 'http://localhost:8080/FalService'
+
+.\.venv\Scripts\python.exe main.py --config config.json</pre>
+<p>این دستور ساخت محیط به نصب Python 3.12 نیاز دارد؛ این نسخه با Dockerfile پروژه هم‌راستا است. برنامه فایل <code>.env</code> را مستقیماً نمی‌خواند؛ در اجرای محلی متغیرها باید در محیط فرایند تنظیم شوند.</p>
+<h3>راه‌اندازی وب‌سرویس آزمایشی</h3>
+<p>در ترمینال جداگانه و از پوشه پروژه اجرا کنید. این ابزار فایل‌های آزمایشی نتیجه را در مسیر تعیین‌شده می‌سازد.</p>
+<pre>python tools/mock_soap_server.py --port 8080 `
+  --staging-dir data/staging --results-dir data/results `
+  --sftp-delay 20 --process-delay 10</pre>
+<p>یک فایل متنی نمونه در <code>data/source</code> قرار دهید، برنامه را اجرا کنید و فرمان <code>start</code> بخش کنترل Redis را بفرستید. برای مشاهده تلاش مجدد، مقدار <code>soap.initial_delay_seconds</code> را مثلاً ۲ و <code>soap.retry_interval_seconds</code> را ۵ قرار دهید.</p>
+<p>وب‌سرویس آزمایشی تا سپری شدن زمان شبیه‌سازی انتقال، خطای پیدا نشدن فایل می‌دهد و سپس سه خروجی <code>_summary.txt</code>، <code>_detail.txt</code> و <code>_errors.txt</code> تولید می‌کند. فایل خطا می‌تواند خالی باشد.</p>
+<div class="note">زمان‌بندی ابزار آزمایشی بر اساس <code>st_ctime</code> است؛ روی ویندوز ممکن است زمان ایجاد اولیه فایل مبنا قرار گیرد و تأخیر شبیه‌سازی‌شده دقیق نباشد. این ابزار تأییدکننده انتقال واقعی SFTP نیست. هم‌زمان فقط یک نمونه از پردازشگر را روی همین داده‌ها اجرا کنید.</div>
+</section>
+<section><h2>۴. تنظیمات مسیرها و SOAP</h2>
+<p>تنظیمات در <code>config.json</code> متمرکز هستند. عبارت‌هایی مانند <code>${DB_HOST:-postgres}</code> از متغیر محیطی استفاده می‌کنند و در نبود آن، مقدار پیش‌فرض را می‌خوانند.</p>
+<table><tr><th>کلید</th><th>کاربرد</th></tr>
+<tr><td><code>paths.source_dir</code></td><td>پوشه فایل‌های اولیه؛ باید موجود باشد.</td></tr>
+<tr><td><code>paths.staging_dir</code></td><td>محل فایل تغییرنام‌یافته برای انتقال خارجی.</td></tr>
+<tr><td><code>paths.results_dir</code> / <code>paths.archive_dir</code></td><td>محل دریافت نتایج و مقصد بایگانی اختیاری.</td></tr>
+<tr><td><code>source.file_glob</code></td><td>پیش‌فرض <code>*.txt</code>؛ فهرست به ترتیب نام مرتب می‌شود.</td></tr>
+<tr><td><code>source.min_age_seconds</code></td><td>حداقل زمان از آخرین تغییر فایل؛ پیش‌فرض صفر.</td></tr>
+<tr><td><code>rename.pattern</code> / <code>rename.replacement</code></td><td>تغییر نام با عبارت منظم؛ پشتیبانی از <code>{job_id}</code> شش‌رقمی، <code>{date}</code> و <code>{datetime}</code>.</td></tr>
+<tr><td><code>rename.on_no_match</code></td><td><code>keep_name</code> یا <code>fail</code>.</td></tr>
+<tr><td><code>rename.on_target_exists</code></td><td><code>error</code> یا <code>overwrite</code>؛ پیش‌فرض خطا.</td></tr>
+<tr><td><code>staging.use_temp_suffix</code></td><td>در انتقال بین فایل‌سیستم‌ها، کپی با پسوند موقت <code>.part</code> انجام می‌شود.</td></tr></table>
+<h3>فراخوانی وب‌سرویس</h3>
+<table><tr><th>کلید زیر بخش <code>soap</code></th><th>کاربرد یا مقدار فعلی</th></tr>
+<tr><td><code>endpoint_url</code> / <code>soap_action</code></td><td>نشانی مقصد و عملیات وب‌سرویس.</td></tr>
+<tr><td><code>soap_version</code> / <code>envelope_template</code></td><td>نسخه ۱٫۱ یا ۱٫۲ و XML درخواست؛ <code>{{file_name}}</code> با نام جدید جایگزین می‌شود.</td></tr>
+<tr><td><code>auth.type</code> / <code>verify_ssl</code></td><td>احراز هویت <code>none/basic/bearer</code>؛ بررسی گواهی فعلاً فعال است.</td></tr>
+<tr><td><code>timeout_seconds</code></td><td>مهلت شبکه هر درخواست: ۶۰ ثانیه.</td></tr>
+<tr><td><code>initial_delay_seconds</code></td><td>انتظار پیش از اولین تلاش: ۶۰ ثانیه.</td></tr>
+<tr><td><code>retry_interval_seconds</code></td><td>فاصله تلاش‌ها: ۱۵ ثانیه.</td></tr>
+<tr><td><code>max_wait_seconds</code> / <code>max_attempts</code></td><td>بودجه انتظار بین تلاش‌ها: ۹۰۰ ثانیه؛ تعداد تلاش صفر یعنی بدون سقف تعداد.</td></tr>
+<tr><td><code>not_found_patterns</code> / <code>success_patterns</code></td><td>الگوهای تشخیص پاسخ؛ در حالت پیش‌فرض موفقیت یعنی HTTP از خانواده ۲xx بدون SOAP Fault.</td></tr>
+<tr><td><code>retry_on_transport_error</code> / <code>retry_on_fault</code></td><td>تکرار خطای ارتباط فعال و تکرار سایر Faultها غیرفعال است.</td></tr>
+<tr><td><code>extra_params_from_db</code></td><td>در صورت فعال بودن، کلیدهای جدول <code>json_config</code> برای جای‌گذاری در قالب XML خوانده می‌شوند.</td></tr></table>
+<p class="foot">در کد فعلی، <code>max_wait_seconds</code> مجموع فاصله‌های انتظار است؛ زمان درخواست‌ها و انتظار اولیه را شامل نمی‌شود و سقف قطعی زمان واقعی نیست.</p>
+</section>
+<section><h2>۵. خروجی‌ها و ساختار پروژه</h2>
+<h3>فایل‌های نتیجه</h3>
+<p>در تنظیمات فعلی هر سه نوع زیر الزامی هستند؛ فقط محتوای خلاصه برای تشخیص موفقیت بررسی می‌شود. <code>{stem}</code> نام تغییر‌یافته بدون پسوند است.</p>
+<table><tr><th>نوع</th><th>الگوی نام</th><th>بررسی وضعیت</th></tr><tr><td><code>summary</code></td><td><code>{stem}_summary*</code></td><td>بله</td></tr><tr><td><code>detail</code></td><td><code>{stem}_detail*</code></td><td>خیر</td></tr><tr><td><code>errors</code></td><td><code>{stem}_errors*</code></td><td>خیر</td></tr></table>
+<table><tr><th>کلید زیر بخش <code>results</code></th><th>کاربرد / مقدار فعلی</th></tr>
+<tr><td><code>wait_timeout_seconds</code> / <code>poll_interval_seconds</code></td><td>انتظار تا ۳۶۰۰ ثانیه بر اساس شمارش فاصله‌های بررسی؛ بررسی هر ۵ ثانیه.</td></tr>
+<tr><td><code>stable_seconds</code></td><td>گذشت حداقل ۲ ثانیه از آخرین تغییر فایل؛ تضمین قفل شدن یا پایان نوشتن نیست.</td></tr>
+<tr><td><code>encoding</code> / <code>encoding_errors</code></td><td><code>utf-8</code> و جایگزینی نویسه نامعتبر با <code>replace</code>.</td></tr>
+<tr><td><code>skip_blank_lines</code></td><td>خطوط خالی در پایگاه داده ذخیره نمی‌شوند.</td></tr>
+<tr><td><code>delimiter</code> / <code>parse_json_lines</code></td><td>تبدیل خط به فهرست یا JSON برای ستون <code>parsed</code>؛ هر دو فعلاً غیرفعال‌اند.</td></tr>
+<tr><td><code>success_regex</code> / <code>failure_regex</code></td><td>الگوی موفقیت <code>(?i)success</code>؛ شکست با واژه‌های <code>fail/failed/failure</code> تشخیص داده می‌شود و اولویت دارد.</td></tr>
+<tr><td><code>after_import</code></td><td><code>keep</code> نگهداری، <code>move</code> بایگانی یا <code>delete</code> حذف؛ پیش‌فرض نگهداری.</td></tr>
+<tr><td><code>log_preview_lines</code> / <code>log_preview_max_chars</code></td><td>فقط ۵ خط نخست با سقف ۳۰۰ نویسه برای هر خط در گزارش نمایش داده می‌شود.</td></tr></table>
+<h3>اجزای اصلی</h3>
+<table><tr><th>فایل</th><th>مسئولیت</th></tr>
+<tr><td><code>main.py</code> / <code>app/config.py</code></td><td>ورود برنامه، اتصال اجزا و اعتبارسنجی تنظیمات.</td></tr>
+<tr><td><code>app/orchestrator.py</code></td><td>اجرای مراحل، تکرار درخواست و مدیریت وضعیت هر فایل.</td></tr>
+<tr><td><code>app/controller.py</code> / <code>app/redis_bus.py</code></td><td>کنترل شروع و توقف، دریافت فرمان و انتشار پیام.</td></tr>
+<tr><td><code>app/file_manager.py</code></td><td>انتقال، تغییر نام، یافتن خروجی‌ها و بایگانی.</td></tr>
+<tr><td><code>app/soap_client.py</code></td><td>ساخت درخواست XML و دسته‌بندی پاسخ.</td></tr>
+<tr><td><code>app/result_processor.py</code> / <code>app/db.py</code></td><td>خواندن و ارزیابی نتایج؛ ثبت داده و نقاط ادامه.</td></tr>
+<tr><td><code>app/logging_setup.py</code></td><td>گزارش کنسول، فایل چرخشی و Redis.</td></tr></table>
+<p class="foot">مسیر پیش‌فرض گزارش: <code>logs/fal_processor.log</code>؛ سقف هر فایل ۱۰ مگابایت با ۵ نسخه پشتیبان. ثبت همه خطوط در پایگاه داده با نمایش محدود خطوط در گزارش متفاوت است.</p>
+</section>
+<section><h2>۶. کنترل و پایش با Redis</h2>
+<p>نام کانال‌ها در <code>redis.channels</code> قابل تغییر است. پیام‌های خروجی JSON هستند؛ فرمان ورودی می‌تواند متن ساده یا JSON مانند <code>{"command":"pause"}</code> باشد.</p>
+<table><tr><th>کانال</th><th>کاربرد</th></tr><tr><td><code>fal:control</code></td><td>دریافت فرمان کاربر.</td></tr><tr><td><code>fal:status</code></td><td>وضعیت اجرا و فایل جاری.</td></tr><tr><td><code>fal:progress</code></td><td>تعداد کل، موفق، ناموفق و درصد پیشرفت.</td></tr><tr><td><code>fal:logs</code></td><td>پیام‌های گزارش برنامه.</td></tr></table>
+<table><tr><th>فرمان</th><th>اثر</th></tr><tr><td><code>start</code></td><td>ادامه آخرین اجرای ناتمام یا ساخت اجرای جدید.</td></tr><tr><td><code>pause</code></td><td>مکث در نقطه کنترل بعدی و ثبت وضعیت.</td></tr><tr><td><code>resume</code></td><td>خروج از مکث؛ در حالت غیرفعال مانند شروع عمل می‌کند.</td></tr><tr><td><code>stop</code></td><td>توقف پردازش با امکان ادامه بعدی؛ خود فرایند باز می‌ماند.</td></tr><tr><td><code>status</code></td><td>انتشار مجدد آخرین وضعیت و پیشرفت موجود در حافظه.</td></tr><tr><td><code>shutdown</code></td><td>توقف و خروج از فرایند؛ سیاست restart در Compose ممکن است آن را دوباره اجرا کند.</td></tr></table>
+<pre>docker compose exec redis redis-cli publish fal:control pause
+docker compose exec redis redis-cli publish fal:control resume
+docker compose exec redis redis-cli publish fal:control stop
+docker compose exec redis redis-cli publish fal:control start
+docker compose exec redis redis-cli psubscribe 'fal:*'
+docker compose exec redis redis-cli get fal:status:last
+docker compose exec redis redis-cli get fal:progress:last</pre>
+<h3>خواندن وضعیت</h3>
+<p><code>WAITING</code>: منتظر شروع؛ <code>RUNNING</code>: اجرای فعال؛ <code>PROCESSING</code>: پردازش؛ <code>WAITING_FOR_FILE</code>: انتظار انتقال فایل؛ <code>WAITING_FOR_RESULT</code>: انتظار خروجی؛ <code>PAUSED</code> و <code>STOPPED</code>: مکث و توقف؛ <code>DONE</code>: پایان اجرا؛ <code>ERROR</code>: خطای اجرای کلی.</p>
+<pre>{"run_id":1,"total":300,"processed":100,
+ "done":98,"failed":2,"percent":33.33,
+ "current_file":"fal_101.txt","timestamp":"..."}</pre>
+<p>درصد پیشرفت از مجموع فایل‌های موفق و ناموفق محاسبه می‌شود؛ رسیدن به ۱۰۰٪ به معنی موفق بودن همه فایل‌ها نیست. پیام <code>DONE</code> نیز می‌تواند شامل فایل ناموفق باشد.</p>
+<p class="foot">فرمان‌ها در کانال Pub/Sub صف پایدار ندارند؛ هنگام قطع اتصال ممکن است دریافت نشوند. مکث و توقف، درخواست شبکه یا عملیات پایگاه داده در حال اجرا را فوراً قطع نمی‌کنند.</p>
+</section>
+<section><h2>۷. داده‌ها، بازیابی و عیب‌یابی</h2>
+<table><tr><th>جدول پیش‌فرض</th><th>محتوا</th></tr><tr><td><code>process_runs</code></td><td>وضعیت کلی اجرا و شمارنده‌ها.</td></tr><tr><td><code>file_jobs</code></td><td>نام اولیه و جدید، مرحله، تعداد تلاش و آخرین خطا.</td></tr><tr><td><code>soap_call_errors</code></td><td>خطاهای SOAP، وضعیت HTTP و بخشی از پاسخ.</td></tr><tr><td><code>result_records</code></td><td>نوع و نام خروجی، شماره خط، متن اصلی و مقدار JSON.</td></tr><tr><td><code>json_config</code></td><td>تنظیمات مشترک وب‌سرویس؛ در اسکریپت SQL تعریف شده است.</td></tr></table>
+<p>نام جدول‌ها زیر <code>database.tables</code> قابل تنظیم است. ساخت خودکار برنامه چهار جدول عملیاتی را ایجاد می‌کند؛ جدول <code>json_config</code> را ایجاد نمی‌کند. اگر به این جدول نیاز دارید، اسکریپت SQL یا ساختار متناظر را در پایگاه داده فراهم کنید.</p>
+<pre>SELECT status, count(*) FROM file_jobs
+WHERE run_id = 1 GROUP BY status;
+
+SELECT file_name, attempt, error_message
+FROM soap_call_errors ORDER BY id DESC LIMIT 20;
+
+SELECT result_type, line_no, raw_line FROM result_records
+WHERE file_name = 'FAL_000001_fal_a.txt' ORDER BY id;</pre>
+<h3>ادامه اجرا و حدود بازیابی</h3>
+<p>مراحل هر فایل به صورت <code>pending → moved → soap_done → done/failed</code> ثبت می‌شود. اجرای دارای وضعیت <code>RUNNING</code>، <code>PAUSED</code>، <code>STOPPED</code> یا <code>ERROR</code> قابل ادامه است. فایل‌های تازه‌وارد در اجرای جدید بعدی انتخاب می‌شوند.</p>
+<p>اگر <code>processing.retry_failed_on_resume=true</code> باشد، فایل‌های ناموفقِ اجرای ناتمام دوباره صف‌بندی می‌شوند. اجرای <code>DONE</code> با فرمان شروع باز نمی‌شود. مقدار <code>processing.on_job_failure</code> تعیین می‌کند پس از شکست یک فایل، پردازش ادامه یابد یا متوقف شود.</p>
+<p>ثبت مجدد نتایج یک فایل، رکوردهای همان کار را در یک تراکنش جایگزین می‌کند. با این حال، SOAP و انتقال فایل با ثبت پایگاه داده تراکنش مشترک ندارند؛ قطع ناگهانی بین موفقیت SOAP و ثبت مرحله می‌تواند باعث فراخوانی مجدد شود. همچنین جابه‌جایی یا حذف نتایج پیش از ثبت نهایی، بازیابی پس از قطع ناگهانی را دشوار می‌کند.</p>
+<h3>مشکلات رایج</h3>
+<table><tr><th>نشانه</th><th>بررسی پیشنهادی</th></tr><tr><td>ماندن در <code>WAITING</code></td><td>فرمان شروع، اتصال Redis، وجود فایل مطابق الگو و حداقل سن فایل.</td></tr><tr><td>تکرار پیدا نشدن فایل</td><td>انتقال خارجی، نام جدید و مسیر مورد انتظار وب‌سرویس.</td></tr><tr><td>انتظار طولانی برای نتیجه</td><td>وجود هر سه خروجی الزامی، تطبیق نام و زمان آخرین تغییر.</td></tr><tr><td>شکست با وجود خروجی</td><td>متن summary و الگوهای موفقیت/شکست؛ نتیجه ذخیره‌شده در پایگاه داده.</td></tr><tr><td>خطای اتصال یا <code>ERROR</code></td><td>گزارش برنامه، میزبان و اطلاعات اتصال؛ پس از رفع مشکل فرمان شروع.</td></tr></table>
+<p class="foot">این سند بر اساس رفتار فعلی کد تهیه شده است. فایل README انگلیسی و کد اجرایی پروژه برای تهیه این راهنما تغییر نکرده‌اند.</p>
+</section></body></html>
+
+

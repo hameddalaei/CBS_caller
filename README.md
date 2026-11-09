@@ -1,242 +1,278 @@
 # Fal Processor
 
-A modular Python service that feeds hundreds of text files, one at a time,  through an
-external SOAP-based processing pipeline and imports the results into PostgreSQL.
-Everything variable lives in `config.json`; the whole run is controlled and observed
-through Redis channels.
+A sequential file-processing service controlled through Redis. It stages and renames
+input files, calls a SOAP service, waits for result files, and imports their lines
+into PostgreSQL. A separate system must perform SFTP and return the result files.
 
-## How it works
+The configuration was aligned on 2026-10-21 with `sample/sample json.txt` and the
+three `.msg` filenames in `sample/`. Despite its filename, the request sample is
+**SOAP XML, not JSON**. Original sample files were preserved.
 
-For every file in the source directory the service repeats this cycle:
+## Sample alignment
 
+- Operation: `BatchScatteredChgSubBasicInfo`.
+- Request: `BatchScatteredChgSubBasicInfoRequestMsg`, including the sample's
+  `RequestHeader`, ownership, access security, operator, and capitalized `FileName`.
+- Incoming files are still selected with `source.file_glob: "*.txt"`.
+  Change that to `"*.msg"` if your original inputs use `.msg` instead.
+- Staged name: `SCATTEREDCHGSUBINFO_{datetime}_{job_id}.msg`.
+  The timestamp is local time and the job ID is padded to at least six digits.
+- Expected outputs: `{stem}_SUMMERY.msg`, `{stem}_SUCC.msg`, `{stem}_FAILED.msg`.
+  The spelling **SUMMERY** is intentional and comes directly from the sample.
+  `{stem}` is the staged filename without `.msg`; matches are exact and case-sensitive.
+- SOAP acceptance requires HTTP 2xx, a valid SOAP envelope, no SOAP Fault,
+  and exactly one configured `ResultCode` with value `0`.
+  XML namespace prefixes may change without affecting matching.
+
+The sample does **not** provide the real endpoint, SOAPAction HTTP header, real
+credentials, input-file contents, or result-file contents. `SOAP_ACTION` defaults
+to empty; obtain its actual value from the service's WSDL/administrator.
+The sample IDs 101/102 are defaults for illustration and must be confirmed.
+`MessageSeq` is generated as a new 32-character hexadecimal UUID per call;
+confirm the provider's length/format and retry rules. It can be supplied explicitly
+through `soap.params.message_seq` or the optional database parameters.
+
+### Provisional result policy
+
+All three result files are required. The summary must contain the whole word
+`success` and must not contain `fail`, `failed`, or `failure` (case-insensitive).
+Any non-whitespace content in `_FAILED.msg` fails the job through its
+`fail_if_nonempty: true` option. An empty summary is not accepted as success.
+
+**This is a conservative configurable policy, not a confirmed Huawei output
+specification.** All three supplied output samples are empty. Confirm actual
+summary syntax and whether a failed-file header can appear without failed records,
+then adjust `results.success_regex`, `failure_regex`, and `fail_if_nonempty`.
+The mock's `STATUS: SUCCESS` line is synthetic test data.
+
+## Validate and test without external services
+
+Run from the project directory in PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:SOAP_PASSWORD = 'test-only'
+.\.venv\Scripts\python.exe main.py --config config.json --validate-config
+.\.venv\Scripts\python.exe testcode\run_tests.py
+.\.venv\Scripts\python.exe -m pip check
 ```
-source dir ──move + rename──▶ staging dir (path 1)
-                                   │   (another program SFTPs the file to a remote server, ~1 min)
-                                   ▼
-              wait `initial_delay_seconds`, then call the SOAP web service with the new file name
-                 ├─ "file does not exist" fault ─▶ store the error in DB + log, wait, retry
-                 └─ success
-                                   ▼
-              wait for the result files in the results dir (path 2)
-                                   ▼
-              import ALL result files into PostgreSQL, write them to the log, evaluate success
-                                   ▼
-              publish progress to Redis ─▶ next file
+
+`--validate-config` does not connect to services or move files. It checks required
+settings, XML, placeholders, booleans, numeric ranges, regexes and result specs.
+Validation intentionally fails when `SOAP_PASSWORD` is empty.
+
+Tests use temporary folders, fake credentials, and loopback HTTP on an ephemeral
+port. Workflow tests use an in-memory database double and a mocked Redis bus.
+They do not touch the production data folders or prove live database behavior.
+
+Two additional live tests require `--live` and explicitly configured
+`FAL_TEST_POSTGRES_DSN` and/or `FAL_TEST_REDIS_URL` dedicated test services.
+The PostgreSQL test creates and removes its own random schema; the Redis test uses
+its own random channel/key. Do not point these variables at production services.
+See `testcode/README.md` for test commands and `VALIDATION.md` for review limitations.
+
+## Run with Docker
+
+The Dockerfile uses Python 3.12; Compose provides PostgreSQL 16 and Redis 7.
+
+```powershell
+New-Item -ItemType Directory -Force -Path data/source,data/staging,data/results,data/archive
+Copy-Item .env.example .env
 ```
 
-The SOAP web service itself reads its parameters from the `json_config` table in the same
-database; this service only passes the file name (optionally it can also forward the
-`json_config` key/values, see `soap.extra_params_from_db`).
+Edit `.env` to supply `SOAP_PASSWORD`, the real endpoint/IDs/action, and the database
+password. The SOAP password belongs in the XML request header; HTTP basic/bearer
+authentication is a separate optional setting under `soap.auth`.
+Configure result parsing before using real inputs. Copy input `.txt` files into
+`data/source`, then run:
 
-## Project layout
-
-```
-fal_processor/
-├── main.py                  entry point (wiring, signals)
-├── config.json              ALL settings
-├── app/
-│   ├── config.py            loading, ${ENV:-default} expansion, validation
-│   ├── controller.py        start / stop / pause / resume state machine
-│   ├── orchestrator.py      the workflow described above
-│   ├── file_manager.py      scan, move + rename, locate / archive result files
-│   ├── soap_client.py       SOAP call + outcome classification
-│   ├── result_processor.py  reading result files, success evaluation
-│   ├── db.py                PostgreSQL access (table names from config)
-│   ├── redis_bus.py         publishing + control subscription
-│   └── logging_setup.py     console, rotating file and Redis log handler
-├── sql/init.sql             PostgreSQL schema script
-├── Dockerfile
-├── docker-compose.yml       postgres + redis + app
-├── requirements.txt
-└── tools/mock_soap_server.py   fake web service for local testing
-```
-
-## Quick start (Docker)
-
-```bash
-mkdir -p data/source data/staging data/results data/archive
-cp /path/to/your/fal/*.txt data/source/
-
-# edit config.json (SOAP url, envelope, rename rule, result patterns ...)
+```powershell
 docker compose up -d --build
 docker compose logs -f app
+```
 
-# begin processing
+After the app is ready, send the start command from another terminal:
+
+```powershell
 docker compose exec redis redis-cli publish fal:control start
 ```
 
-Local directories `./data/*` are mounted to `/data/*` in the container. `config.json` is
-mounted read-only: after editing it run `docker compose restart app`.
+## GitHub Actions and Docker Hub
 
-Database/Redis credentials can be overridden with a `.env` file next to
-`docker-compose.yml` (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `SOAP_URL`).
+The CI/CD workflow runs the tests and configuration check before building the
+production image. It publishes the image on pushes to `main` and `v*` version
+tags. Configure Docker Hub credentials in GitHub Actions as described in
+[GITHUB_CI_CD.md](GITHUB_CI_CD.md). The Docker build excludes `testcode/` and
+`tests/`; these remain separate repository-only test code.
 
-### Running without Docker
+`app.auto_start` defaults to false. Local `./data` is mounted as `/data` and `./logs`
+as `/app/logs`; `config.json` is mounted read-only. After editing that JSON file,
+run `docker compose restart app`. After editing Compose environment settings,
+run `docker compose up -d` so the containers receive them.
 
-```bash
-pip install -r requirements.txt
-# point config.json (or env vars DB_HOST, REDIS_HOST, SOURCE_DIR, ...) to your services
-python main.py --config config.json
+The `sql/init.sql` script runs when PostgreSQL initializes an empty volume.
+Changing the environment password does not update an already-created DB user.
+The sample Compose exposes PostgreSQL and Redis host ports; restrict their
+network exposure and configure authentication for your deployment.
+
+## Run Python locally
+
+Use the environment created above and run only PostgreSQL/Redis through Compose
+(or use existing test services). Do not also run the Compose app against the same
+files/database.
+
+```powershell
+docker compose up -d postgres redis
+$env:DB_HOST = 'localhost'
+$env:REDIS_HOST = 'localhost'
+$env:DB_NAME = 'fal_db'
+$env:DB_USER = 'fal_user'
+$env:DB_PASSWORD = 'your-configured-database-password'
+$env:SOURCE_DIR = "$PWD/data/source"
+$env:STAGING_DIR = "$PWD/data/staging"
+$env:RESULTS_DIR = "$PWD/data/results"
+$env:ARCHIVE_DIR = "$PWD/data/archive"
+$env:SOAP_URL = 'http://localhost:8080/FalService'
+$env:SOAP_PASSWORD = 'test-only'
+.\.venv\Scripts\python.exe main.py --config config.json
 ```
 
-## Redis channels
+Python does not automatically load `.env`; set environment variables in its
+terminal. The `test-only` password is for the mock, not the real service.
+Configuration values support `${NAME}` and `${NAME:-default}` substitutions.
 
-All channel names are configurable under `redis.channels`. Messages are JSON.
+### Local mock service
 
-| Channel (default) | Direction | Content |
-|---|---|---|
-| `fal:control`  | you → service | commands (see below) |
-| `fal:logs`     | service → you | every log line |
-| `fal:status`   | service → you | current state of the service |
-| `fal:progress` | service → you | percentage of finished files |
+Start in a separate terminal from the project folder:
 
-### Control commands
+```powershell
+.\.venv\Scripts\python.exe tools/mock_soap_server.py --port 8080 `
+  --staging-dir data/staging --results-dir data/results `
+  --sftp-delay 2 --process-delay 1
+```
 
-Send either plain text or JSON (`{"command": "pause"}`):
+For a quick retry demonstration, set `soap.initial_delay_seconds` to 0 and
+`soap.retry_interval_seconds` to 1 before starting the app. The mock measures
+transfer delay from the first SOAP request that sees the staged file, using a
+monotonic clock on both Windows and Linux. It performs no real SFTP.
+Use `--result-code 999` to simulate business rejection on HTTP 200, or
+`--failed-records` to produce a nonempty failed output.
 
-| Command | Effect |
+When the app is inside Docker and the mock is on its host, use the configured
+`host.docker.internal` endpoint and start the mock with `--host 0.0.0.0` so the
+container can reach it. The default mock bind address is loopback only.
+
+## Redis control and progress
+
+| Channel | Purpose |
 |---|---|
-| `start`  | Starts a new run from the source directory, **or resumes the unfinished run** found in the database |
-| `pause`  | Pauses at the next safe point (also during waits/retries). Checkpoint saved in DB |
-| `resume` | Continues after `pause` (or behaves like `start` after a `stop`) |
-| `stop`   | Stops at the next safe point; checkpoint stays in DB, `start` continues later |
-| `status` | Re-publishes the last status and progress messages |
-| `shutdown` | Stops the run and exits the process (same as SIGTERM) |
+| `fal:control` | Commands to the app |
+| `fal:status` | Current state and file |
+| `fal:progress` | Total, processed, done, failed, percent |
+| `fal:logs` | Logs, including exception details |
 
-```bash
-redis-cli publish fal:control start
-redis-cli publish fal:control pause
-redis-cli publish fal:control resume
-redis-cli publish fal:control stop
-redis-cli psubscribe 'fal:*'          # watch everything
-redis-cli get fal:status:last         # last status (late subscribers)
-redis-cli get fal:progress:last       # last progress
-```
+Commands accept plain text or JSON such as `{"command":"pause"}`.
 
-### Status values
-
-| State | Meaning |
+| Command | Behavior |
 |---|---|
-| `WAITING` | Idle, waiting for the `start` command |
-| `RUNNING` | A run is active |
-| `PROCESSING` | Moving/renaming, calling the web service or importing results |
-| `WAITING_FOR_FILE` | Web service says the file is not on the remote server yet (SFTP in progress) |
-| `WAITING_FOR_RESULT` | Web service succeeded; waiting for the result files |
-| `PAUSED` / `STOPPED` | Paused / stopped by command |
-| `DONE` | Run finished |
-| `ERROR` | Unexpected error (e.g. database down); fix it and send `start` to resume |
+| `start` | Resume the latest unfinished run, or create a new run |
+| `pause` | Pause at the next safe checkpoint |
+| `resume` | Resume a pause, or start when idle |
+| `stop` | Stop processing and retain checkpoints; process stays alive |
+| `status` | Republish the last in-memory status/progress |
+| `shutdown` | Exit the process; Compose restart policy may restart it |
 
-```json
-{"state": "WAITING_FOR_FILE", "message": "File not yet available on remote server (attempt 2)",
- "run_id": 1, "file": "fal_a.txt", "timestamp": "2026-10-20T07:33:19+00:00"}
+```powershell
+docker compose exec redis redis-cli publish fal:control pause
+docker compose exec redis redis-cli publish fal:control resume
+docker compose exec redis redis-cli publish fal:control stop
+docker compose exec redis redis-cli psubscribe 'fal:*'
+docker compose exec redis redis-cli get fal:status:last
+docker compose exec redis redis-cli get fal:progress:last
 ```
 
-### Progress message
+States: `WAITING`, `RUNNING`, `PROCESSING`, `WAITING_FOR_FILE`,
+`WAITING_FOR_RESULT`, `PAUSED`, `STOPPED`, `DONE`, `ERROR`.
+Progress counts successful **and failed** files; 100% or `DONE` does not mean all
+files succeeded. Redis commands are Pub/Sub messages, not a durable queue.
+Pause/stop cannot interrupt an already-running HTTP request or DB transaction.
 
-```json
-{"run_id": 1, "total": 300, "processed": 100, "done": 98, "failed": 2,
- "percent": 33.33, "current_file": "fal_101.txt", "timestamp": "..."}
-```
+## Configuration reference
 
-### Log message
-
-```json
-{"timestamp": "...", "level": "WARNING", "logger": "fal.orchestrator", "run_id": 1,
- "file": "fal_a.txt", "message": "Attempt 2: web service reports that the file does not exist yet: ..."}
-```
-
-## Configuration reference (`config.json`)
-
-Values may reference environment variables: `${NAME}` or `${NAME:-default}`.
-
-| Key | Description |
+| Section/key | Meaning |
 |---|---|
-| `app.auto_start` | `true` = start processing immediately when the service boots |
-| `paths.source_dir` | Directory with the original fal files |
-| `paths.staging_dir` | **Path 1** – files are moved here (renamed). The external SFTP job reads from here |
-| `paths.results_dir` | **Path 2** – where the result files appear |
-| `paths.archive_dir` | Target when `results.after_import` is `move` |
-| `source.file_glob` | Which files to take, e.g. `*.txt` |
-| `source.min_age_seconds` | Ignore files modified more recently than this (still being written) |
-| `rename.pattern` / `rename.replacement` | Regex rename (`re.sub` syntax, group refs like `\g<name>`). Extra tokens in the replacement: `{job_id}` (6-digit), `{date}`, `{datetime}` |
-| `rename.on_no_match` | `keep_name` or `fail` when the regex does not match a file name |
-| `rename.on_target_exists` | `error` or `overwrite` |
-| `staging.use_temp_suffix`, `staging.temp_suffix` | Cross-filesystem moves are copied to `<name>.part` first so the SFTP job never sees a half file |
-| `soap.endpoint_url`, `soap_version`, `soap_action`, `timeout_seconds`, `verify_ssl`, `headers`, `auth` | Connection settings (`auth.type`: `none`, `basic`, `bearer`) |
-| `soap.envelope_template` | Request XML. `{{file_name}}` is replaced (XML-escaped) with the renamed file name |
-| `soap.extra_params_from_db` | `true` = also expose every `json_config` key as `{{key}}` placeholder |
-| `soap.initial_delay_seconds` | Time to wait **before the first call** so the external SFTP can finish (default 60) |
-| `soap.retry_interval_seconds` | Pause between retries |
-| `soap.max_wait_seconds` / `soap.max_attempts` | Give up on a file after this time / number of calls (`max_attempts` 0 = unlimited) |
-| `soap.not_found_patterns` | Regexes (case-insensitive) that identify the "file does not exist" answer |
-| `soap.success_patterns` | Optional regexes the response must match; empty = HTTP 2xx without a SOAP Fault |
-| `soap.retry_on_transport_error`, `soap.retry_on_fault` | Retry on network errors / other SOAP faults, or fail the file immediately |
-| `soap.record_errors_in_db` | Store every failed call in the errors table |
-| `results.files[]` | One entry per expected result file: `name`, `glob` (`{stem}` = renamed file name without extension, `{filename}` = full name), `required`, `check_status` |
-| `results.wait_timeout_seconds`, `poll_interval_seconds`, `stable_seconds` | How long / how often to wait for result files, and how long a file must be unchanged before it is read |
-| `results.encoding`, `encoding_errors`, `skip_blank_lines` | File reading |
-| `results.delimiter` / `results.parse_json_lines` | Fill the `parsed` JSONB column (split by delimiter, or JSON per line) |
-| `results.success_regex` / `failure_regex` | Applied to the result files that have `check_status: true` |
-| `results.log_preview_lines`, `log_preview_max_chars` | How many lines of each result file are written to the log |
-| `results.after_import` | `keep`, `move` (to archive dir) or `delete` |
-| `processing.on_job_failure` | `continue` with the next file, or `stop` the run |
-| `processing.retry_failed_on_resume` | Failed files are retried when a run is resumed |
-| `database.*` | Connection, `schema`, `auto_create_tables`, **table names** (`database.tables.*`) and `json_config` column names |
-| `redis.*` | Connection and **channel names** (`redis.channels.*`) |
-| `logging.*` | Level, console, rotating log file, publish to Redis |
+| `paths.*` | Source, staging, results, archive directories |
+| `source.file_glob`, `min_age_seconds` | Input selection and minimum modification age |
+| `rename.*` | Regex rename, `{datetime}`/`{date}`/`{job_id}`, conflict policy |
+| `staging.*` | Temporary `.part` suffix when copying across filesystems |
+| `soap.params` | XML placeholder values; optional DB params override these |
+| `soap.extra_params_from_db` | Read key/value parameters from `json_config` |
+| `soap.result_code_path`, `result_desc_path`, `success_codes` | Namespaced XML response validation |
+| `soap.success_patterns` | Optional additional regex requirement; never bypasses HTTP status or ResultCode |
+| `soap.initial_delay_seconds` | Wait before the first attempt (default 60) |
+| `soap.retry_interval_seconds` | Wait between attempts (default 15) |
+| `soap.max_attempts` | Attempt limit; 0 means no count limit |
+| `soap.max_wait_seconds` | Retry-sleep budget (default 900), not a wall-clock deadline |
+| `soap.retry_on_transport_error`, `retry_on_fault` | Retry network errors / other service failures |
+| `results.files` | Exact filename patterns, required flags, status checks, nonempty failure flags |
+| `results.stable_seconds` | Required modification age (default 2); not a file lock |
+| `results.wait_timeout_seconds`, `poll_interval_seconds` | Result polling budget and interval |
+| `results.encoding`, `encoding_errors`, `skip_blank_lines` | Decoding and line filtering |
+| `results.delimiter`, `parse_json_lines` | Optional JSONB parsing; otherwise only raw lines |
+| `results.after_import` | `keep`, `move`, `delete`; cleanup only after successful completion is saved |
+| `processing.on_job_failure` | `continue` or `stop` |
+| `processing.retry_failed_on_resume` | Retry failed jobs of an unfinished run |
+| `database.*`, `redis.*` | Connections, table/channel names |
+| `logging.*` | Console, rotating file, Redis logging |
 
-> Table names are quoted identifiers: use lowercase names (e.g. `json_config`, not `Json_config`),
-> otherwise PostgreSQL treats them as case-sensitive.
->
-> Result globs: keep the file-name token unique per file (the default rename contains `{job_id}`).
-> A pattern like `{stem}_summary*` could otherwise also match another file whose name starts with the same stem.
+Only the first configured preview lines are logged; all retained nonblank lines
+are imported into the database. Defaults: UTF-8, replacement of invalid characters,
+5 preview lines, 300 characters per preview, `logs/fal_processor.log` with a 10 MB
+rotation threshold and 5 backups.
 
-## Database
-
-Tables (names configurable; created by `sql/init.sql` in Docker, or by the app itself when
-`database.auto_create_tables` is `true`):
+## Database and recovery
 
 | Table | Purpose |
 |---|---|
-| `process_runs` | Run-level checkpoint (`RUNNING`, `PAUSED`, `STOPPED`, `ERROR`, `DONE`, counters) |
-| `file_jobs` | File-level checkpoint: `pending → moved → soap_done → done / failed`, attempts, last error |
-| `soap_call_errors` | Every failed web service call (e.g. "file does not exist"), with HTTP status and response excerpt |
-| `result_records` | Every line of every result file (`result_type`, `result_file`, `line_no`, `raw_line`, `parsed`) |
-| `json_config` | Read by the web service (sample rows included) |
+| `process_runs` | Run state and counters |
+| `file_jobs` | File state, persisted target name, attempts, timestamps, errors |
+| `soap_call_errors` | Failed service calls and response excerpts |
+| `result_records` | One row per retained result line, plus optional JSONB |
+| `json_config` | Optional external-service parameters |
 
-Useful queries:
+The app can create its four operational tables. It does **not** create
+`json_config`; the Docker initialization SQL does. Table/column names are configurable.
 
-```sql
-SELECT status, count(*) FROM file_jobs WHERE run_id = 1 GROUP BY status;
-SELECT file_name, attempt, error_message, created_at FROM soap_call_errors ORDER BY id DESC LIMIT 20;
-SELECT result_type, line_no, raw_line FROM result_records WHERE file_name = 'FAL_000001_fal_a.txt' ORDER BY id;
-```
+The normal job stages are `pending -> moved -> soap_done -> done/failed`.
+The timestamp-based target name is saved **before** moving the file. On retry,
+failed jobs resume from their last persisted stage (`soap_ok_at`, then `moved_at`),
+so successful SOAP calls are not deliberately repeated after result failure.
 
-### Checkpoints and resuming
+Imported rows are atomically replaced per job. Result cleanup happens after the
+`done` checkpoint; failed outputs remain available for diagnosis/retry. A crash
+after completion but before cleanup can leave output files behind.
 
-State is persisted after every step, so after `stop`, `pause`, a crash or a restart,
-`start` continues exactly where it left off: a file that was already moved is not moved
-again, one whose web service call succeeded goes straight to waiting for results, and
-result import is idempotent. New files added to the source directory are picked up by the
-next *new* run (after the current one is `DONE`).
+There is no distributed transaction with the external SOAP service: a crash after
+the remote service accepts a request but before the app saves `soap_done` can still
+cause a duplicate request. Coordinate idempotency with the provider. Run only one
+processor instance against these folders/tables; multi-worker claiming is not implemented.
 
-## Testing locally with the mock web service
+`start` resumes only runs in `RUNNING`, `PAUSED`, `STOPPED`, or `ERROR`.
+It does not reopen a `DONE` run, even if that run contained failed files.
+New input files are discovered only at the start of a new run.
 
-```bash
-python tools/mock_soap_server.py --port 8080 \
-    --staging-dir data/staging --results-dir data/results \
-    --sftp-delay 20 --process-delay 10
-```
+## Layout and review artifacts
 
-It answers "File does not exist" until `--sftp-delay` seconds after the file appears in the
-staging directory, then answers success and creates `*_summary.txt`, `*_detail.txt`,
-`*_errors.txt` in the results directory. Set `soap.initial_delay_seconds` and
-`soap.retry_interval_seconds` to small values in `config.json` for a quick test
-(the mock relies on Linux `ctime`, so it is for development only).
+- `main.py`: entry point and configuration-only validation.
+- `app/`: controller, workflow, filesystem, SOAP, PostgreSQL, Redis and logging.
+- `tools/mock_soap_server.py`: sample-compatible local mock.
+- `testcode/`: complete test suite, runner, English/Persian instructions and coverage reports.
+- `tests/`: compatibility wrappers for the original test modules.
+- `VALIDATION.md`: review findings and test scope.
+- `testcode/reports/latest.txt`: latest full-suite test output.
+- `validation/tests.txt`: earlier validation-run output.
+- `validation/before-validation.zip`: original code/config/docs before the review.
 
-## Adapting to your web service
-
-1. Replace `soap.envelope_template`, `soap_action` and `endpoint_url` with your service's request.
-2. Adjust `soap.not_found_patterns` to the exact wording of its "file does not exist" error.
-3. Adjust `results.files[]` globs to the real result-file names, and set `check_status`
-   on the file that tells whether processing succeeded together with `success_regex`/`failure_regex`.
+The existing `readme.pdf` and `readme.fa.html` describe the **2026-10-20 version**;
+they predate this sample synchronization. Use this README for the updated settings.

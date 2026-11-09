@@ -249,7 +249,8 @@ class Database:
     def reset_failed_jobs(self, run_id):
         return self._exec(
             sql.SQL(
-                "UPDATE {} SET status = CASE WHEN renamed_name IS NULL THEN 'pending' ELSE 'moved' END, "
+                "UPDATE {} SET status = CASE WHEN soap_ok_at IS NOT NULL THEN 'soap_done' "
+                "WHEN moved_at IS NOT NULL THEN 'moved' ELSE 'pending' END, "
                 "soap_attempts = 0, last_error = NULL, finished_at = NULL, updated_at = now() "
                 "WHERE run_id = %s AND status = 'failed'"
             ).format(self.jobs),

@@ -4,101 +4,109 @@
     "auto_start": false,
     "idle_poll_seconds": 1
   },
-
   "paths": {
     "source_dir": "${SOURCE_DIR:-/data/source}",
     "staging_dir": "${STAGING_DIR:-/data/staging}",
     "results_dir": "${RESULTS_DIR:-/data/results}",
     "archive_dir": "${ARCHIVE_DIR:-/data/archive}"
   },
-
   "source": {
     "file_glob": "*.txt",
     "min_age_seconds": 0
   },
-
   "rename": {
-    "pattern": "^(?P<name>.+)\\.txt$",
-    "replacement": "FAL_{job_id}_\\g<name>.txt",
-    "on_no_match": "keep_name",
+    "pattern": "^(?P<name>.+)\\.(?:txt|msg)$",
+    "replacement": "SCATTEREDCHGSUBINFO_{datetime}_{job_id}.msg",
+    "on_no_match": "fail",
     "on_target_exists": "error"
   },
-
   "staging": {
     "use_temp_suffix": true,
     "temp_suffix": ".part"
   },
-
   "soap": {
-    "wsdl_url": "http://cbs-host/BIService?wsdl",
-    "endpoint_url": "http://cbs-host/BIService",
-    "namespace": "http://www.huawei.com/bme/cbsinterface/cbsbatchprovision",
-    "namespace_prefix": "cbs",
-    "service_name": "BatchProvisionService",
-    "port_name": "BatchProvisionPort",
-    "request_message": "BatchScatteredChgSubBasicInfoRequestMsg",
-    "request_element": "BatchScatteredChgSubBasicInfoRequest",
-    "request_header": {
-      "Version": "1.0",
-      "BusinessCode": "CHGSCATTEREDACCT",
-      "MessageSeq": "{{message_seq}}",
-      "BEID": "BEID_001",
-      "LoginSystemCode": "FAL_PROCESSOR",
-      "Password": "changeme",
-      "OperatorID": "SYS_OP"
+    "endpoint_url": "${SOAP_URL:-http://host.docker.internal:8080/FalService}",
+    "soap_version": "1.1",
+    "soap_action": "${SOAP_ACTION:-}",
+    "timeout_seconds": 60,
+    "verify_ssl": true,
+    "headers": {},
+    "auth": {
+      "type": "none",
+      "username": "",
+      "password": "",
+      "token": ""
     },
-    "envelope_template": "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:cbs=\"http://www.huawei.com/bme/cbsinterface/cbsbatchprovision\"><soap:Header><cbs:RequestHeader><cbs:Version>{{Version}}</cbs:Version><cbs:BusinessCode>{{BusinessCode}}</cbs:BusinessCode><cbs:MessageSeq>{{MessageSeq}}</cbs:MessageSeq><cbs:BEID>{{BEID}}</cbs:BEID><cbs:LoginSystemCode>{{LoginSystemCode}}</cbs:LoginSystemCode><cbs:Password>{{Password}}</cbs:Password><cbs:OperatorID>{{OperatorID}}</cbs:OperatorID></cbs:RequestHeader></soap:Header><soap:Body><cbs:BatchScatteredChgSubBasicInfoRequestMsg><cbs:BatchScatteredChgSubBasicInfoRequest><cbs:FileName>{{file_name}}</cbs:FileName></cbs:BatchScatteredChgSubBasicInfoRequest></cbs:BatchScatteredChgSubBasicInfoRequestMsg></soap:Body></soap:Envelope>",
+    "envelope_template": "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:bcs=\"http://www.huawei.com/bme/cbsinterface/bcservices\" xmlns:cbs=\"http://www.huawei.com/bme/cbsinterface/cbscommon\"> \n   <soapenv:Header/> \n   <soapenv:Body> \n      <bcs:BatchScatteredChgSubBasicInfoRequestMsg> \n         <RequestHeader> \n            <cbs:Version>{{version}}</cbs:Version> \n            <cbs:BusinessCode>BatchScatteredChgSubBasicInfo</cbs:BusinessCode> \n            <cbs:MessageSeq>{{message_seq}}</cbs:MessageSeq> \n            <cbs:OwnershipInfo> \n               <cbs:BEID>{{beid}}</cbs:BEID> \n            </cbs:OwnershipInfo> \n            <cbs:AccessSecurity> \n               <cbs:LoginSystemCode>{{login_system_code}}</cbs:LoginSystemCode> \n               <cbs:Password>{{password}}</cbs:Password> \n            </cbs:AccessSecurity> \n            <cbs:OperatorInfo> \n               <cbs:OperatorID>{{operator_id}}</cbs:OperatorID> \n            </cbs:OperatorInfo> \n         </RequestHeader> \n         <BatchScatteredChgSubBasicInfoRequest> \n            <bcs:FileName>{{file_name}}</bcs:FileName> \n         </BatchScatteredChgSubBasicInfoRequest> \n      </bcs:BatchScatteredChgSubBasicInfoRequestMsg> \n   </soapenv:Body> \n</soapenv:Envelope>",
     "extra_params_from_db": false,
-
     "initial_delay_seconds": 60,
     "retry_interval_seconds": 15,
     "max_wait_seconds": 900,
     "max_attempts": 0,
     "retry_on_transport_error": true,
     "retry_on_fault": false,
-
     "not_found_patterns": [
       "file does not exist",
       "file not found",
       "no such file",
       "file doesn't exist"
     ],
-    "success_patterns": [
-      "<cbs:ResultCode>0</cbs:ResultCode>",
-      "ResultCode>0<",
-      "Operation successfully"
-    ],
-
+    "success_patterns": [],
     "record_errors_in_db": true,
-    "response_excerpt_chars": 2000
+    "response_excerpt_chars": 2000,
+    "params": {
+      "version": "1",
+      "beid": "${SOAP_BEID:-101}",
+      "login_system_code": "${SOAP_LOGIN_SYSTEM_CODE:-102}",
+      "password": "${SOAP_PASSWORD}",
+      "operator_id": "${SOAP_OPERATOR_ID:-101}"
+    },
+    "result_code_path": "./{http://www.huawei.com/bme/cbsinterface/bcservices}BatchScatteredChgSubBasicInfoResultMsg/ResultHeader/{http://www.huawei.com/bme/cbsinterface/cbscommon}ResultCode",
+    "result_desc_path": "./{http://www.huawei.com/bme/cbsinterface/bcservices}BatchScatteredChgSubBasicInfoResultMsg/ResultHeader/{http://www.huawei.com/bme/cbsinterface/cbscommon}ResultDesc",
+    "success_codes": [
+      "0"
+    ]
   },
-
   "results": {
     "wait_timeout_seconds": 3600,
     "poll_interval_seconds": 5,
     "stable_seconds": 2,
     "files": [
-      { "name": "summary", "glob": "{stem}*_summary*", "required": false, "check_status": true },
-      { "name": "detail",  "glob": "{stem}*_detail*",  "required": false, "check_status": false },
-      { "name": "failed",  "glob": "{stem}*_FAILED.msg", "required": false, "check_status": false, "delimiter": "|", "columns": ["account_id", "operation_type", "segment_info", "error_code", "error_message"] }
+      {
+        "name": "summary",
+        "glob": "{stem}_SUMMERY.msg",
+        "required": true,
+        "check_status": true
+      },
+      {
+        "name": "success",
+        "glob": "{stem}_SUCC.msg",
+        "required": true,
+        "check_status": false
+      },
+      {
+        "name": "failed",
+        "glob": "{stem}_FAILED.msg",
+        "required": true,
+        "check_status": false,
+        "fail_if_nonempty": true
+      }
     ],
     "encoding": "utf-8",
     "encoding_errors": "replace",
     "skip_blank_lines": true,
     "delimiter": "",
     "parse_json_lines": false,
-    "success_regex": "(?i)(success|completed|ResultCode>0<)",
-    "failure_regex": "(?i)\\b(fail|failed|failure|error)\\b",
+    "success_regex": "(?i)\\bsuccess\\b",
+    "failure_regex": "(?i)\\b(fail|failed|failure)\\b",
     "log_preview_lines": 5,
     "log_preview_max_chars": 300,
     "after_import": "keep"
   },
-
   "processing": {
     "on_job_failure": "continue",
     "retry_failed_on_resume": true
   },
-
   "database": {
     "host": "${DB_HOST:-postgres}",
     "port": "${DB_PORT:-5432}",
@@ -123,11 +131,11 @@
       "value_column": "config_value"
     }
   },
-
   "redis": {
     "host": "${REDIS_HOST:-redis}",
     "port": "${REDIS_PORT:-6379}",
     "db": 0,
+    "password": "${REDIS_PASSWORD:-}",
     "socket_timeout_seconds": 5,
     "reconnect_delay_seconds": 3,
     "retain_last_values": true,
@@ -138,7 +146,6 @@
       "progress": "fal:progress"
     }
   },
-
   "logging": {
     "level": "INFO",
     "console": true,

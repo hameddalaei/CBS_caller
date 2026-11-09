@@ -1,6 +1,7 @@
 """Start / stop / pause / resume state shared between the Redis listener and the worker."""
 
 import threading
+import time
 
 
 class StopRequested(Exception):
@@ -96,6 +97,7 @@ class Controller:
             step = min(1.0, remaining)
             with self._cv:
                 if not self._stop and not self._pause:
+                    started = time.monotonic()
                     self._cv.wait(step)
-            remaining -= step
+                    remaining -= min(step, time.monotonic() - started)
         self.guard()
